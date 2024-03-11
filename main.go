@@ -1,129 +1,128 @@
-package gogo_dorks
+package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
-	"github.com/PuerkitoBio/goquery"
-	tld "golang.org/x/net/publicsuffix"
-	"log"
-	"math/rand"
-	"net/http"
-	"net/url"
 	"os"
-	"time"
+	"strconv"
+	"strings"
+
+	"github.com/logrusorgru/aurora/v3"
+	log "github.com/projectdiscovery/gologger"
+	"github.com/projectdiscovery/gologger/levels"
 )
 
-func parseArgs() (domain string, results int, output string) {
-	flag.StringVar(&domain, "domain", "", "Domain to scan (required)")
-	flag.IntVar(&results, "results", 10, "Number of results per search, default 10")
-	flag.StringVar(&output, "output", "", "Output file")
+func init() {
+	flag.StringVar(&query, "q", "", "")
+	flag.StringVar(&query, "query", "", "")
+
+	flag.StringVar(&engine, "e", "", "")
+	flag.StringVar(&engine, "engine", "google", "")
+
+	flag.IntVar(&page, "p", 1, "")
+	flag.IntVar(&page, "page", 1, "")
+
+	flag.Var(&headers, "header", "")
+	flag.Var(&headers, "H", "")
+
+	flag.StringVar(&proxy, "x", "", "")
+	flag.StringVar(&proxy, "proxy", "", "")
+
+	flag.BoolVar(&silent, "s", false, "")
+	flag.BoolVar(&silent, "silent", false, "")
+
+	flag.StringVar(&outputFile, "o", "", "")
+	flag.StringVar(&outputFile, "outputFile", "", "")
+
+	flag.StringVar(&dList, "dL", "", "")
+	flag.StringVar(&dList, "dList", "", "")
+
+	flag.StringVar(&domain, "d", "", "")
+	flag.StringVar(&domain, "domain", "", "")
+
+	flag.Usage = func() {
+		h := []string{
+			"Options:",
+			"  -q, --query <query>          Search query",
+			"  -e, --engine <engine>        Provide search engine (default: Google)",
+			"                               (options: Google, Shodan, Bing, Duck, Yahoo, Ask)",
+			"  -p, --page <i>               Specify number of pages (default: 1)",
+			"  -H, --header <header>        Pass custom header to search engine",
+			"  -x, --proxy <proxy_url>      Use proxy to surfing (HTTP/SOCKSv5 proxy)",
+			"  -s, --silent                 Silent mode",
+			"  -o, --outputFile <filename>  Write output to file",
+			"  -dL, --dorkList <filename>   Use dork list from file",
+			"  -d, --domain <domain>        Search specific domain",
+			"\n",
+		}
+		showBanner()
+		fmt.Fprintf(os.Stderr, "%s", aurora.Green(strings.Join(h, "\n")))
+	}
 	flag.Parse()
 
-	if domain == "" {
-		log.Fatal("The --domain (-d) flag is required.")
+	engine = strings.ToLower(engine)
+
+	maxLog := levels.LevelDebug
+	if silent {
+		maxLog = levels.LevelSilent
 	}
+	log.DefaultLogger.SetMaxLevel(maxLog)
 
-	return
-}
-
-func save(file, data string) {
-	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(data + "\n"); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func GoogleSearch(query string) ([]string, error) {
-	results := []string{}
-
-	// Google search query
-	searchURL := fmt.Sprintf("https://www.google.com/search?q=%s", url.QueryEscape(query))
-	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", searchURL, nil)
-	if err != nil {
-		return results, err
-	}
-
-	req.Header.Set("User-Agent", randomUserAgent())
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return results, err
-	}
-	defer resp.Body.Close()
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return results, err
-	}
-
-	sel := doc.Find("div#search .g .r a")
-	for i := range sel.Nodes {
-		item := sel.Eq(i)
-		href, exists := item.Attr("href")
-		if exists {
-			results = append(results, href)
-		}
-	}
-
-	return results, nil
-}
-
-func randomUserAgent() string {
-	userAgents := []string{
-		// List of User Agents
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
-		// Add more user agents if needed
-	}
-	return userAgents[rand.Intn(len(userAgents))]
+	showBanner()
 }
 
 func main() {
-	domain, amount, outputFile := parseArgs()
-	rand.Seed(time.Now().UnixNano())
-
-	// Extract target domain
-	_, err := tld.PublicSuffix(domain)
-	if err != false {
-		log.Fatal(err)
-	}
-
-	// List of Google dorks (shortened for example; add the full dorks as needed)
-	dorks := map[string]string{
-		// "# .git folders": "inurl:\"/.git\" " + domain + " -github",
-		// Add more dorks as needed
-	}
-
-	for description, dork := range dorks {
-		fmt.Println("\n" + description + "\n")
-		if outputFile != "" {
-			save(outputFile, description)
+	if isStdin() {
+		sc := bufio.NewScanner(os.Stdin)
+		for sc.Scan() {
+			q := sc.Text()
+			queries = append(queries, q)
+		}
+	} else {
+		if query == "" && dList == "" {
+			log.Fatal().Msgf("Missing required -q flag!")
+			os.Exit(2)
 		}
 
-		results, err := GoogleSearch(dork)
-		if err != nil {
-			log.Printf("Error searching for dork '%s': %v", dork, err)
-			continue
-		}
+		queries = []string{query}
+	}
 
-		for i, result := range results {
-			fmt.Println(result)
-			if outputFile != "" {
-				save(outputFile, result)
+	log.Info().Msgf("Query : %+v", queries)
+	log.Info().Msgf("Page  : %s", strconv.Itoa(page))
+	if proxy != "" {
+		log.Info().Msgf("Proxy : %s", proxy)
+	}
+	if len(headers) > 0 {
+		log.Info().Msgf("Header: [%+v]", headers)
+	}
+	if domain != "" {
+		log.Info().Msgf("Domain: %s", domain)
+	}
+	log.Info().Msgf("Engine: %s", strings.Title(engine))
+	log.Warning().Msg("Use at your own risk! Developers assume no responsibility...")
+	log.Warning().Msg("If your IP address has been blocked by search engine providers or other reason.\n\n")
+
+	for _, q := range queries {
+		wg.Add(1)
+		go func(dork string) {
+			defer wg.Done()
+			opts := options{
+				Query:   dork,
+				Engine:  engine,
+				Page:    page,
+				Proxy:   proxy,
+				Headers: headers,
 			}
 
-			if (i + 1) >= amount {
-				break
+			fatal, err := opts.search()
+			if err != nil {
+				if fatal {
+					isError(err)
+				}
+				log.Warning().Msgf("Something error %s.", err.Error())
 			}
-
-			// Randomize sleep time
-			time.Sleep(time.Duration(rand.Intn(15-1)+1) * time.Second)
-		}
+		}(q)
 	}
+	wg.Wait()
 }
